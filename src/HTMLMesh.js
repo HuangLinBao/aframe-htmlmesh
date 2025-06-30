@@ -282,6 +282,235 @@ function html2canvas( element ) {
 
 	}
 
+	function parsePseudoContent( content ) {
+
+		if ( ! content || content === 'none' || content === 'normal' ) return '';
+
+		// Remove outer quotes but preserve inner quotes
+		content = content.replace( /^['"]|['"]$/g, '' );
+
+		// Handle Unicode escape sequences like \f083, \1F60A, etc.
+		content = content.replace( /\\([0-9a-fA-F]{1,6})\s?/g, ( match, hex ) => {
+
+			return String.fromCharCode( parseInt( hex, 16 ) );
+
+		} );
+
+		// Handle escaped quotes
+		content = content.replace( /\\'/g, "'" ).replace( /\\"/g, '"' );
+
+		// Handle other common escape sequences
+		content = content.replace( /\\n/g, '\n' ).replace( /\\t/g, '\t' );
+
+		return content;
+
+	}
+
+	function calculatePseudoPosition( element, pseudoStyle, parentX, parentY, parentWidth, parentHeight ) {
+
+		const position = pseudoStyle.position;
+		const display = pseudoStyle.display;
+
+		if ( display === 'none' ) return null;
+
+		let x = parentX;
+		let y = parentY;
+
+		// Parse positioning values
+		const left = pseudoStyle.left !== 'auto' ? parseFloat( pseudoStyle.left ) || 0 : 0;
+		const top = pseudoStyle.top !== 'auto' ? parseFloat( pseudoStyle.top ) || 0 : 0;
+		const right = pseudoStyle.right !== 'auto' ? parseFloat( pseudoStyle.right ) || 0 : null;
+		const bottom = pseudoStyle.bottom !== 'auto' ? parseFloat( pseudoStyle.bottom ) || 0 : null;
+
+		if ( position === 'absolute' ) {
+
+			// Absolute positioning relative to nearest positioned ancestor
+			x = parentX + left;
+			y = parentY + top;
+
+			if ( right !== null && pseudoStyle.left === 'auto' ) {
+
+				x = parentX + parentWidth - right;
+
+			}
+
+			if ( bottom !== null && pseudoStyle.top === 'auto' ) {
+
+				y = parentY + parentHeight - bottom;
+
+			}
+
+		} else if ( position === 'relative' ) {
+
+			// Relative positioning from normal position
+			x = parentX + left;
+			y = parentY + top;
+
+		} else {
+
+			// Static positioning - normal flow
+			x = parentX + left;
+			y = parentY + top;
+
+		}
+
+		return { x: x, y: y };
+
+	}
+
+	function renderPseudoElementContent( pseudoStyle, content, x, y, width, height ) {
+
+		const fontSize = parseFloat( pseudoStyle.fontSize ) || 16;
+		const lineHeight = parseFloat( pseudoStyle.lineHeight ) || fontSize * 1.2;
+
+		// Handle background
+		const backgroundColor = pseudoStyle.backgroundColor;
+		if ( backgroundColor && backgroundColor !== 'transparent' && backgroundColor !== 'rgba(0, 0, 0, 0)' ) {
+
+			context.fillStyle = backgroundColor;
+			buildRectPath( x, y, width, height, parseFloat( pseudoStyle.borderRadius ) || 0 );
+			context.fill();
+
+		}
+
+		// Handle borders
+		const borderWidth = parseFloat( pseudoStyle.borderWidth ) || 0;
+		const borderColor = pseudoStyle.borderColor;
+		const borderStyle = pseudoStyle.borderStyle;
+
+		if ( borderWidth > 0 && borderStyle !== 'none' && borderColor && borderColor !== 'transparent' ) {
+
+			context.strokeStyle = borderColor;
+			context.lineWidth = borderWidth;
+			buildRectPath( x, y, width, height, parseFloat( pseudoStyle.borderRadius ) || 0 );
+			context.stroke();
+
+		}
+
+		// Handle text content
+		if ( content ) {
+
+			const textAlign = pseudoStyle.textAlign || 'left';
+			const verticalAlign = pseudoStyle.verticalAlign || 'baseline';
+
+			let textX = x;
+			let textY = y;
+
+			// Apply text alignment
+			if ( textAlign === 'center' ) {
+
+				textX = x + width / 2;
+				context.textAlign = 'center';
+
+			} else if ( textAlign === 'right' ) {
+
+				textX = x + width;
+				context.textAlign = 'right';
+
+			} else {
+
+				context.textAlign = 'left';
+
+			}
+
+			// Apply vertical alignment
+			if ( verticalAlign === 'middle' ) {
+
+				textY = y + height / 2 - fontSize / 2;
+
+			} else if ( verticalAlign === 'bottom' ) {
+
+				textY = y + height - fontSize;
+
+			}
+
+			// Set up text rendering
+			context.font = `${pseudoStyle.fontWeight || 'normal'} ${pseudoStyle.fontStyle || 'normal'} ${fontSize}px ${pseudoStyle.fontFamily || 'Arial'}`;
+			context.fillStyle = pseudoStyle.color || '#000000';
+			context.textBaseline = 'top';
+
+			// Handle text transform
+			const textTransform = pseudoStyle.textTransform;
+			if ( textTransform === 'uppercase' ) {
+
+				content = content.toUpperCase();
+
+			} else if ( textTransform === 'lowercase' ) {
+
+				content = content.toLowerCase();
+
+			} else if ( textTransform === 'capitalize' ) {
+
+				content = content.replace( /\b\w/g, ( char ) => char.toUpperCase() );
+
+			}
+
+			// Render text with proper line breaks
+			const lines = content.split( '\n' );
+			for ( let i = 0; i < lines.length; i ++ ) {
+
+				context.fillText( lines[ i ], textX, textY + i * lineHeight );
+
+			}
+
+			// Reset text align
+			context.textAlign = 'left';
+
+		}
+
+	}
+
+	function drawPseudoElement( element, pseudoType, parentX, parentY, parentWidth, parentHeight ) {
+
+		const pseudoStyle = window.getComputedStyle( element, pseudoType );
+		const content = parsePseudoContent( pseudoStyle.content );
+
+		// Skip if no content or display: none
+		if ( ! content && pseudoStyle.display !== 'block' && pseudoStyle.display !== 'inline-block' ) return;
+
+		const position = calculatePseudoPosition( element, pseudoStyle, parentX, parentY, parentWidth, parentHeight );
+		if ( ! position ) return;
+
+		// Calculate dimensions
+		let width = parseFloat( pseudoStyle.width ) || 0;
+		let height = parseFloat( pseudoStyle.height ) || 0;
+
+		// Auto-size based on content if no explicit dimensions
+		if ( width === 0 && content ) {
+
+			context.font = `${pseudoStyle.fontWeight || 'normal'} ${pseudoStyle.fontStyle || 'normal'} ${parseFloat( pseudoStyle.fontSize ) || 16}px ${pseudoStyle.fontFamily || 'Arial'}`;
+			const metrics = context.measureText( content );
+			width = metrics.width;
+
+		}
+
+		if ( height === 0 && content ) {
+
+			height = parseFloat( pseudoStyle.fontSize ) || 16;
+
+		}
+
+		// Apply padding
+		const paddingLeft = parseFloat( pseudoStyle.paddingLeft ) || 0;
+		const paddingTop = parseFloat( pseudoStyle.paddingTop ) || 0;
+		const paddingRight = parseFloat( pseudoStyle.paddingRight ) || 0;
+		const paddingBottom = parseFloat( pseudoStyle.paddingBottom ) || 0;
+
+		const totalWidth = width + paddingLeft + paddingRight;
+		const totalHeight = height + paddingTop + paddingBottom;
+
+		// Render the pseudo-element
+		renderPseudoElementContent(
+			pseudoStyle,
+			content,
+			position.x,
+			position.y,
+			totalWidth,
+			totalHeight
+		);
+
+	}
+
 	function drawElement( element, style ) {
 
 		// Do not render invisible elements, comments and scripts.
@@ -317,7 +546,7 @@ function html2canvas( element ) {
 			x = rect.left - offset.left - 0.5;
 			y = rect.top - offset.top - 0.5;
 
-		        context.save();
+			context.save();
 			const dpr = window.devicePixelRatio;
 			context.scale( 1 / dpr, 1 / dpr );
 			context.drawImage( element, x, y );
@@ -370,8 +599,8 @@ function html2canvas( element ) {
 				if ( prevBorder !== null ) {
 
 					match = ( style[ border + 'Width' ] === style[ prevBorder + 'Width' ] ) &&
-					( style[ border + 'Color' ] === style[ prevBorder + 'Color' ] ) &&
-					( style[ border + 'Style' ] === style[ prevBorder + 'Style' ] );
+						( style[ border + 'Color' ] === style[ prevBorder + 'Color' ] ) &&
+						( style[ border + 'Style' ] === style[ prevBorder + 'Style' ] );
 
 				}
 
@@ -505,6 +734,10 @@ function html2canvas( element ) {
 				}
 
 			}
+
+			// Render pseudo-elements (::before and ::after)
+			drawPseudoElement( element, '::before', x, y, width, height );
+			drawPseudoElement( element, '::after', x, y, width, height );
 
 		}
 
